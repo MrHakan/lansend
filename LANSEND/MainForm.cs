@@ -100,9 +100,9 @@ internal sealed class MainForm : Form
         _scanButton.Click += async (_, _) => await ScanAsync();
         bottom.Controls.Add(_scanButton);
 
-        ConfigureBottomButton(_openTargetButton, "Hedef paylaşımı aç", 160);
+        ConfigureBottomButton(_openTargetButton, "Bu PC'yi alıcı yap", 160);
         _openTargetButton.Location = new Point(230, 12);
-        _openTargetButton.Click += (_, _) => OpenTargetShare();
+        _openTargetButton.Click += async (_, _) => await ConfigureThisComputerAsync();
         bottom.Controls.Add(_openTargetButton);
 
         _sendButton.Text = "Seçili cihaza gönder";
@@ -138,7 +138,7 @@ internal sealed class MainForm : Form
         content.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         content.Controls.Add(new Label
         {
-            Text = "SMB açık cihazlar",
+            Text = "Ağdaki cihazlar",
             Font = new Font("Segoe UI Semibold", 13F, FontStyle.Bold),
             ForeColor = Color.FromArgb(35, 43, 52),
             Dock = DockStyle.Fill,
@@ -199,6 +199,8 @@ internal sealed class MainForm : Form
         var menu = new ContextMenuStrip();
         menu.Items.Add("LANSEND'i aç", null, (_, _) => ShowWindow());
         menu.Items.Add("Ağı tara", null, async (_, _) => await ScanAsync());
+        menu.Items.Add("Bu PC'yi alıcı yap", null, async (_, _) => await ConfigureThisComputerAsync());
+        menu.Items.Add("Send to kısayolunu yenile", null, (_, _) => RefreshSendToShortcut());
         menu.Items.Add("Hedef paylaşımını aç", null, (_, _) => OpenTargetShare());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Çıkış", null, (_, _) => ExitApplication());
@@ -216,6 +218,7 @@ internal sealed class MainForm : Form
 
     private void MainFormOnShown(object? sender, EventArgs e)
     {
+        EnsureWindowIsVisible();
         RefreshDeviceList();
         if (_startHidden && _pendingPaths.Count == 0)
         {
@@ -235,17 +238,13 @@ internal sealed class MainForm : Form
 
         _scanCancellation = new CancellationTokenSource();
         _scanButton.Enabled = false;
-        UpdateStatus("Yerel ağdaki IP adresleri ve SMB paylaşımı taranıyor...");
+        UpdateStatus("Yerel ağ ARP, Ping ve yaygın servis portlarıyla taranıyor...");
         try
         {
             var devices = await _discovery.ScanAsync(_devices, _scanCancellation.Token);
             _devices = devices.ToList();
             _profileStore.Save(_devices);
             RefreshDeviceList();
-            if (_devices.Count == 0)
-            {
-                UpdateStatus("SMB cihazı bulunamadı. Hedefte paylaşımı açın veya IP ile ekleyin.");
-            }
         }
         catch (OperationCanceledException)
         {
@@ -285,6 +284,11 @@ internal sealed class MainForm : Form
                 item.SubItems.Add(device.IpAddress);
                 item.SubItems.Add(device.ShareName);
                 item.SubItems.Add(device.Status);
+                item.ForeColor = device.IsSmbAvailable
+                    ? Color.FromArgb(24, 120, 72)
+                    : device.IsOnline
+                        ? Color.FromArgb(165, 100, 18)
+                        : Color.FromArgb(125, 130, 138);
                 _deviceList.Items.Add(item);
                 if (device.Id == selectedId)
                 {
@@ -299,15 +303,19 @@ internal sealed class MainForm : Form
 
         if (_devices.Count == 0)
         {
-            UpdateStatus("SMB cihazı bulunamadı. Hedefte paylaşımı açın veya IP ile ekleyin.");
+            UpdateStatus("Aktif cihaz bulunamadı. Windows ağ profilini Private yapın veya IP ile ekleyin.");
         }
         else if (_pendingPaths.Count > 0)
         {
-            UpdateStatus($"{_devices.Count} kayıt bulundu. Göndermek için çevrimiçi bir cihaz seçin.");
+            var onlineCount = _devices.Count(device => device.IsOnline);
+            var smbCount = _devices.Count(device => device.IsSmbAvailable);
+            UpdateStatus($"{onlineCount} aktif cihaz bulundu; {smbCount} cihaz SMB ile gönderime hazır.");
         }
         else
         {
-            UpdateStatus($"{_devices.Count} cihaz listelendi.");
+            var onlineCount = _devices.Count(device => device.IsOnline);
+            var smbCount = _devices.Count(device => device.IsSmbAvailable);
+            UpdateStatus($"{onlineCount} aktif cihaz bulundu; {smbCount} cihaz SMB ile gönderime hazır.");
         }
     }
 
@@ -353,6 +361,8 @@ internal sealed class MainForm : Form
         if (index >= 0)
         {
             profile.IsOnline = _devices[index].IsOnline;
+            profile.IsSmbAvailable = _devices[index].IsSmbAvailable;
+            profile.DiscoveryMethod = _devices[index].DiscoveryMethod;
             _devices[index] = profile;
         }
         else
@@ -515,6 +525,49 @@ internal sealed class MainForm : Form
         }
     }
 
+    private async Task ConfigureThisComputerAsync()
+    {
+        _openTargetButton.Enabled = false;
+        UpdateStatus("Windows LANSEND paylaşımı hazırlanıyor; yönetici iznini onaylayın...");
+        try
+        {
+            await TargetShareSetupService.ConfigureThisComputerAsync(CancellationToken.None);
+            UpdateStatus("Bu bilgisayar artık LANSEND dosyalarını alabilir.");
+            MessageBox.Show(
+                this,
+                "Documents\\LANSEND klasörü paylaşıma açıldı. Bu bilgisayarda LANSEND'in açık kalması gerekmez.",
+                "LANSEND",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            await ScanAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            UpdateStatus("Alıcı kurulumu iptal edildi.");
+        }
+        catch (Exception exception)
+        {
+            UpdateStatus("Alıcı kurulumu başarısız.");
+            MessageBox.Show(this, exception.Message, "LANSEND - Alıcı kurulumu", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            _openTargetButton.Enabled = true;
+        }
+    }
+
+    private void RefreshSendToShortcut()
+    {
+        if (ShellIntegrationService.EnsureSendToShortcut(out var error))
+        {
+            UpdateStatus("Send to → LANSEND kısayolu hazır.");
+            MessageBox.Show(this, "Send to → LANSEND kısayolu oluşturuldu.", "LANSEND", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        MessageBox.Show(this, error ?? "Send to kısayolu oluşturulamadı.", "LANSEND", MessageBoxButtons.OK, MessageBoxIcon.Error);
+    }
+
     private void ControlPipeOnRequestReceived(object? sender, ControlRequest request)
     {
         RunOnUi(() => HandleExternalRequest(request));
@@ -543,8 +596,19 @@ internal sealed class MainForm : Form
         ShowInTaskbar = true;
         Show();
         WindowState = FormWindowState.Normal;
+        EnsureWindowIsVisible();
         Activate();
         BringToFront();
+    }
+
+    private void EnsureWindowIsVisible()
+    {
+        var workingArea = Screen.FromRectangle(Bounds).WorkingArea;
+        var maximumLeft = Math.Max(workingArea.Left, workingArea.Right - Width);
+        var maximumTop = Math.Max(workingArea.Top, workingArea.Bottom - Height);
+        Location = new Point(
+            Math.Clamp(Left, workingArea.Left, maximumLeft),
+            Math.Clamp(Top, workingArea.Top, maximumTop));
     }
 
     private void UpdateStatus(string text)

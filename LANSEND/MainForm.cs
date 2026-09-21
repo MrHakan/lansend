@@ -576,9 +576,6 @@ internal sealed class MainForm : Form
         catch (InvalidOperationException)
         {
         }
-        catch (ObjectDisposedException)
-        {
-        }
     }
 
     private static string FormatBytes(long bytes)

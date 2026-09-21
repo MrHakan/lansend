@@ -1,5 +1,5 @@
 param(
-    [string] $AppPath = (Join-Path $PSScriptRoot "LANSEND.exe")
+    [string] $AppPath = (Join-Path (Split-Path -Parent $PSScriptRoot) "LANSEND.exe")
 )
 
 $ErrorActionPreference = "Stop"

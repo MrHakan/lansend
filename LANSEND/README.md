@@ -5,13 +5,13 @@ Windows üzerinde aynı yerel ağdaki bilgisayarlar arasında, hedefte LANSEND a
 ## Kullanım
 
 1. Dosya alacak her Windows bilgisayarda `Scripts\Enable-DirectTarget.ps1` script'ini yönetici PowerShell ile bir kez çalıştırın.
-2. Dosya göndereceğiniz bilgisayarda LANSEND'i kurun; `Send to` entegrasyonu ve isteğe bağlı tepsi başlangıcı oluşturulur.
+2. Dosya göndereceğiniz bilgisayarda LANSEND'i çalıştırın; `Send to → LANSEND` kısayolu otomatik oluşturulur.
 3. Dosya Gezgini'nde bir dosya veya klasöre sağ tıklayın.
 4. `Send to` → `LANSEND` seçin.
-5. LANSEND, yerel ağdaki TCP `445` açık cihazları tarar; listeden cihaz adı, kullanıcı adı, IP ve paylaşımı kontrol edin.
+5. LANSEND, yerel ağı ARP, Ping ve yaygın servis portlarıyla tarar. Bütün aktif cihazlar listelenir; SMB hazır olanlar ayrıca belirtilir.
 6. Hedefi seçip gönderin. Dosyalar doğrudan hedefteki `Documents\LANSEND` klasörüne yazılır; hedef bilgisayarda LANSEND'in açık olması gerekmez.
 
-Otomatik taramada görünmeyen bir cihaz için `IP ile ekle` düğmesiyle IP adresini, cihaz adını ve gerekirse Windows kullanıcı adını kaydedebilirsiniz. İlk erişimde Windows kimlik bilgileri sorulabilir; parola kaydedilmez.
+Otomatik taramada görünmeyen bir cihaz için `IP ile ekle` düğmesiyle IP adresini, cihaz adını ve gerekirse Windows kullanıcı adını kaydedebilirsiniz. `Bu PC'yi alıcı yap` düğmesi mevcut bilgisayardaki paylaşımı tek seferde kurar. İlk erişimde Windows kimlik bilgileri sorulabilir; parola kaydedilmez.
 
 ## Geliştirme ve yayınlama
 
@@ -45,7 +45,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 ## Tasarım notları
 
-- Cihaz keşfi, yerel IPv4 alt ağlarında TCP `445` portu taranarak yapılır; cihaz adı DNS üzerinden çözülür.
+- Cihaz keşfi ARP tablosu, ICMP Ping ve yaygın TCP servis portlarıyla yapılır; cihaz adı DNS üzerinden çözülür.
 - Dosya aktarımı hedefteki standart Windows SMB paylaşımına doğrudan yapılır; hedefte LANSEND alıcı servisi yoktur.
 - Geçici `.part` dosyası tamamlanınca hedef ada taşınır.
 - Aynı isimde dosya varsa mevcut dosya ezilmez; `(1)`, `(2)` biçiminde yeni ad verilir.

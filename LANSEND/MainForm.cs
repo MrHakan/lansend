@@ -91,20 +91,24 @@ internal sealed class MainForm : Form
             BackColor = Color.White
         };
         ConfigureBottomButton(_addButton, "IP ile ekle", 96);
+        _addButton.Location = new Point(20, 12);
         _addButton.Click += (_, _) => AddDevice();
         bottom.Controls.Add(_addButton);
 
         ConfigureBottomButton(_scanButton, "Ağı tara", 96);
+        _scanButton.Location = new Point(125, 12);
         _scanButton.Click += async (_, _) => await ScanAsync();
         bottom.Controls.Add(_scanButton);
 
         ConfigureBottomButton(_openTargetButton, "Hedef paylaşımı aç", 160);
+        _openTargetButton.Location = new Point(230, 12);
         _openTargetButton.Click += (_, _) => OpenTargetShare();
         bottom.Controls.Add(_openTargetButton);
 
         _sendButton.Text = "Seçili cihaza gönder";
         _sendButton.Width = 175;
         _sendButton.Height = 36;
+        _sendButton.Top = 12;
         _sendButton.Anchor = AnchorStyles.Right | AnchorStyles.Top;
         _sendButton.Click += async (_, _) => await SendSelectedAsync();
         bottom.Controls.Add(_sendButton);

@@ -1,15 +1,17 @@
 # LANSEND
 
-Windows üzerinde aynı yerel ağdaki bilgisayarlar arasında hızlı dosya paylaşımı.
+Windows üzerinde aynı yerel ağdaki bilgisayarlar arasında, hedefte LANSEND açık olmadan hızlı dosya paylaşımı.
 
 ## Kullanım
 
-1. Her Windows cihazda LANSEND'i çalıştırın.
-2. İlk kurulumdan sonra uygulama arka planda tepsi simgesi olarak çalışır.
+1. Dosya alacak her Windows bilgisayarda `Scripts\Enable-DirectTarget.ps1` script'ini yönetici PowerShell ile bir kez çalıştırın.
+2. Dosya göndereceğiniz bilgisayarda LANSEND'i kurun; `Send to` entegrasyonu ve isteğe bağlı tepsi başlangıcı oluşturulur.
 3. Dosya Gezgini'nde bir dosya veya klasöre sağ tıklayın.
 4. `Send to` → `LANSEND` seçin.
-5. Açılan pencerede cihaz adı, Windows kullanıcı adı ve IP adresiyle hedef bilgisayarı seçin.
-6. Alıcı onay verirse dosyalar alıcıdaki `Documents\LANSEND` klasörüne yazılır.
+5. LANSEND, yerel ağdaki TCP `445` açık cihazları tarar; listeden cihaz adı, kullanıcı adı, IP ve paylaşımı kontrol edin.
+6. Hedefi seçip gönderin. Dosyalar doğrudan hedefteki `Documents\LANSEND` klasörüne yazılır; hedef bilgisayarda LANSEND'in açık olması gerekmez.
+
+Otomatik taramada görünmeyen bir cihaz için `IP ile ekle` düğmesiyle IP adresini, cihaz adını ve gerekirse Windows kullanıcı adını kaydedebilirsiniz. İlk erişimde Windows kimlik bilgileri sorulabilir; parola kaydedilmez.
 
 ## Geliştirme ve yayınlama
 
@@ -33,16 +35,19 @@ Kurulum script'i:
 
 - `%APPDATA%\Microsoft\Windows\SendTo\LANSEND.lnk` kısayolunu oluşturur.
 - Windows başlangıcına arka plan kısayolu ekler.
-- Private network profili için UDP `43821` keşif ve TCP `43822` aktarım portlarını açmayı dener.
+
+Hedef paylaşımını hazırlamak için:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\Scripts\Enable-DirectTarget.ps1
+```
 
 ## Tasarım notları
 
-- Cihaz keşfi UDP broadcast ile yapılır; listede cihaz adı, kullanıcı adı ve IP adresi gösterilir.
-- Dosya aktarımı TCP üzerinden yapılır ve büyük dosyalarda akış halinde ilerler.
-- Alınan dosyalar geçici `.part` dosyasına yazılır, tamamlanınca hedef ada taşınır.
+- Cihaz keşfi, yerel IPv4 alt ağlarında TCP `445` portu taranarak yapılır; cihaz adı DNS üzerinden çözülür.
+- Dosya aktarımı hedefteki standart Windows SMB paylaşımına doğrudan yapılır; hedefte LANSEND alıcı servisi yoktur.
+- Geçici `.part` dosyası tamamlanınca hedef ada taşınır.
 - Aynı isimde dosya varsa mevcut dosya ezilmez; `(1)`, `(2)` biçiminde yeni ad verilir.
-- Gelen aktarım varsayılan olarak karşı cihazın onayını gerektirir.
+- Cihaz profilleri `%APPDATA%\LANSEND\devices.json` içinde tutulur; parola saklanmaz.
 - Uygulama tek örnek çalışır; Send to kısayolu açık örneğe dosya yollarını named pipe üzerinden iletir.
-- Gelen yollar temizlenir ve `Documents\LANSEND` dışına yazılmasına izin verilmez.
-
-Bu sürüm aynı özel LAN üzerinde çalışan ilk Windows prototipidir. Sonraki aşamada cihaz güven eşleştirme, aktarım geçmişi, duraklat/devam et ve Windows paketleme eklenebilir.

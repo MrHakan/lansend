@@ -58,7 +58,7 @@ internal sealed class DirectSmbTransferService
             Directory.CreateDirectory(target.UncPath);
             return Task.CompletedTask;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or DirectoryNotFoundException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             throw new SmbAuthenticationRequiredException(
                 $"{target.UncPath} paylaşımına erişilemedi. Hedef bilgisayarda Enable-DirectTarget.ps1 bir kez çalıştırılmalı veya SMB kimlik bilgileri girilmeli.",

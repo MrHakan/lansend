@@ -1,15 +1,25 @@
+using System.Text.Json.Serialization;
+
 namespace LANSEND;
 
-public sealed class PeerInfo
+public sealed class DeviceProfile
 {
-    public string Id { get; init; } = string.Empty;
-    public string DeviceName { get; init; } = string.Empty;
-    public string UserName { get; init; } = string.Empty;
-    public string IpAddress { get; init; } = string.Empty;
-    public int TransferPort { get; init; } = AppConstants.TransferPort;
-    public DateTime LastSeenUtc { get; init; }
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string DeviceName { get; set; } = string.Empty;
+    public string IpAddress { get; set; } = string.Empty;
+    public string UserName { get; set; } = string.Empty;
+    public string ShareName { get; set; } = AppConstants.DefaultShareName;
 
-    public string DisplayName => $"{DeviceName} ({UserName})";
+    [JsonIgnore]
+    public bool IsOnline { get; set; }
+
+    [JsonIgnore]
+    public string Status => !IsOnline
+        ? "Çevrimdışı"
+        : "SMB hazır";
+
+    [JsonIgnore]
+    public string UncPath => $@"\\{IpAddress}\{(string.IsNullOrWhiteSpace(ShareName) ? AppConstants.DefaultShareName : ShareName)}";
 }
 
 public sealed class TransferFile
@@ -29,57 +39,16 @@ public sealed class TransferProgress
     public double Percentage => TotalBytes <= 0 ? 100 : BytesSent * 100d / TotalBytes;
 }
 
-public sealed class IncomingTransferRequest
-{
-    public string DeviceName { get; init; } = string.Empty;
-    public string UserName { get; init; } = string.Empty;
-    public string RemoteIpAddress { get; init; } = string.Empty;
-    public IReadOnlyList<TransferItemInfo> Files { get; init; } = Array.Empty<TransferItemInfo>();
-    public long TotalBytes { get; init; }
-}
-
-public sealed class TransferItemInfo
-{
-    public string RelativePath { get; init; } = string.Empty;
-    public long Length { get; init; }
-}
-
-public sealed class TransferCompletedEventArgs : EventArgs
-{
-    public string RemoteIpAddress { get; init; } = string.Empty;
-    public IReadOnlyList<string> ReceivedPaths { get; init; } = Array.Empty<string>();
-}
-
-internal sealed class DiscoveryMessage
-{
-    public string Protocol { get; set; } = AppConstants.Protocol;
-    public string InstanceId { get; set; } = string.Empty;
-    public string DeviceName { get; set; } = string.Empty;
-    public string UserName { get; set; } = string.Empty;
-    public int TransferPort { get; set; } = AppConstants.TransferPort;
-}
-
-internal sealed class TransferOffer
-{
-    public string Protocol { get; set; } = AppConstants.Protocol;
-    public string TransferId { get; set; } = string.Empty;
-    public string SenderDeviceName { get; set; } = string.Empty;
-    public string SenderUserName { get; set; } = string.Empty;
-    public List<TransferItemInfo> Files { get; set; } = new();
-    public long TotalBytes { get; set; }
-}
-
-internal sealed class TransferResponse
-{
-    public string Type { get; set; } = string.Empty;
-    public bool Accepted { get; set; }
-    public string Message { get; set; } = string.Empty;
-}
-
 internal sealed class ControlRequest
 {
     public string Command { get; set; } = string.Empty;
     public List<string> Paths { get; set; } = new();
+}
+
+internal sealed class SmbCredentials
+{
+    public string UserName { get; init; } = string.Empty;
+    public string Password { get; init; } = string.Empty;
 }
 
 public sealed class TransferFileBuildResult

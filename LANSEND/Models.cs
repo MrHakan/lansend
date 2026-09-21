@@ -16,7 +16,7 @@ public sealed class DeviceProfile
     [JsonIgnore]
     public string Status => !IsOnline
         ? "Çevrimdışı"
-        : "SMB hazır";
+        : "TCP 445 açık";
 
     [JsonIgnore]
     public string UncPath => $@"\\{IpAddress}\{(string.IsNullOrWhiteSpace(ShareName) ? AppConstants.DefaultShareName : ShareName)}";

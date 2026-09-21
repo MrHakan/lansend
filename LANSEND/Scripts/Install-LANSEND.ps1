@@ -33,14 +33,6 @@ function New-LANSENDShortcut {
 New-LANSENDShortcut -ShortcutPath (Join-Path $sendToPath "LANSEND.lnk") -Arguments ""
 New-LANSENDShortcut -ShortcutPath (Join-Path $startupPath "LANSEND.lnk") -Arguments "--background"
 
-try {
-    New-NetFirewallRule -DisplayName "LANSEND Discovery" -Direction Inbound -Protocol UDP -LocalPort 43821 -Profile Private -Action Allow -ErrorAction Stop | Out-Null
-    New-NetFirewallRule -DisplayName "LANSEND Transfers" -Direction Inbound -Protocol TCP -LocalPort 43822 -Profile Private -Action Allow -ErrorAction Stop | Out-Null
-    Write-Host "Windows Firewall kuralları eklendi (Private network)."
-}
-catch {
-    Write-Warning "Firewall kuralları eklenemedi. Yönetici PowerShell ile tekrar çalıştırabilirsiniz."
-}
-
 Write-Host "LANSEND Send to entegrasyonu kuruldu."
 Write-Host "Uygulama: $AppPath"
+Write-Host "Hedef bilgisayarlarda bir kez yönetici PowerShell ile Enable-DirectTarget.ps1 çalıştırın."

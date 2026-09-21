@@ -23,14 +23,12 @@ internal static class Program
         }
 
         var startHidden = args.Any(argument => argument.Equals("--background", StringComparison.OrdinalIgnoreCase));
-        using var discovery = new PeerDiscoveryService();
-        using var server = new TransferServer();
-        var transferClient = new TransferClient();
+        var discovery = new LanDeviceDiscoveryService();
+        var transfer = new DirectSmbTransferService();
+        var profileStore = new DeviceProfileStore();
         using var controlPipe = new ControlPipeService();
-        using var form = new MainForm(discovery, server, transferClient, controlPipe, paths, startHidden);
+        using var form = new MainForm(discovery, transfer, profileStore, controlPipe, paths, startHidden);
 
-        discovery.Start();
-        server.Start();
         controlPipe.Start();
         Application.Run(form);
     }

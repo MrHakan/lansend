@@ -14,9 +14,17 @@ public sealed class DeviceProfile
     public bool IsOnline { get; set; }
 
     [JsonIgnore]
+    public bool IsSmbAvailable { get; set; }
+
+    [JsonIgnore]
+    public string DiscoveryMethod { get; set; } = string.Empty;
+
+    [JsonIgnore]
     public string Status => !IsOnline
         ? "Çevrimdışı"
-        : "TCP 445 açık";
+        : IsSmbAvailable
+            ? "Çevrimiçi • SMB hazır"
+            : $"Çevrimiçi{(string.IsNullOrWhiteSpace(DiscoveryMethod) ? string.Empty : $" • {DiscoveryMethod}")}";
 
     [JsonIgnore]
     public string UncPath => $@"\\{IpAddress}\{(string.IsNullOrWhiteSpace(ShareName) ? AppConstants.DefaultShareName : ShareName)}";

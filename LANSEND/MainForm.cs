@@ -6,35 +6,39 @@ namespace LANSEND;
 
 internal sealed class MainForm : Form
 {
-    private readonly PeerDiscoveryService _discovery;
-    private readonly TransferServer _server;
-    private readonly TransferClient _client;
+    private readonly LanDeviceDiscoveryService _discovery;
+    private readonly DirectSmbTransferService _transfer;
+    private readonly DeviceProfileStore _profileStore;
     private readonly ControlPipeService _controlPipe;
     private readonly bool _startHidden;
     private readonly List<string> _pendingPaths;
-    private readonly ListView _peerList = new();
+    private readonly ListView _deviceList = new();
     private readonly Label _selectedFilesLabel = new();
     private readonly Label _statusLabel = new();
     private readonly Button _sendButton = new();
-    private readonly Button _openFolderButton = new();
-    private readonly Button _refreshButton = new();
+    private readonly Button _openTargetButton = new();
+    private readonly Button _scanButton = new();
+    private readonly Button _addButton = new();
     private readonly NotifyIcon _trayIcon;
+    private List<DeviceProfile> _devices;
     private bool _exitRequested;
+    private CancellationTokenSource? _scanCancellation;
     private CancellationTokenSource? _sendCancellation;
 
     public MainForm(
-        PeerDiscoveryService discovery,
-        TransferServer server,
-        TransferClient client,
+        LanDeviceDiscoveryService discovery,
+        DirectSmbTransferService transfer,
+        DeviceProfileStore profileStore,
         ControlPipeService controlPipe,
         IEnumerable<string> initialPaths,
         bool startHidden)
     {
         _discovery = discovery;
-        _server = server;
-        _client = client;
+        _transfer = transfer;
+        _profileStore = profileStore;
         _controlPipe = controlPipe;
         _startHidden = startHidden;
+        _devices = _profileStore.Load();
         _pendingPaths = initialPaths
             .Where(path => !path.StartsWith("--", StringComparison.OrdinalIgnoreCase))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -42,17 +46,14 @@ internal sealed class MainForm : Form
 
         Text = "LANSEND";
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(760, 480);
-        Size = new Size(920, 620);
+        MinimumSize = new Size(820, 500);
+        Size = new Size(980, 640);
         Font = new Font("Segoe UI", 9F);
         BackColor = Color.FromArgb(245, 247, 250);
 
         BuildUi();
 
         _trayIcon = BuildTrayIcon();
-        _discovery.PeersChanged += DiscoveryOnPeersChanged;
-        _server.ConfirmTransferAsync = ConfirmIncomingTransferAsync;
-        _server.TransferCompleted += ServerOnTransferCompleted;
         _controlPipe.RequestReceived += ControlPipeOnRequestReceived;
         Shown += MainFormOnShown;
     }
@@ -62,7 +63,7 @@ internal sealed class MainForm : Form
         var header = new Panel
         {
             Dock = DockStyle.Top,
-            Height = 88,
+            Height = 96,
             BackColor = Color.FromArgb(29, 78, 121),
             Padding = new Padding(24, 15, 24, 10)
         };
@@ -76,44 +77,49 @@ internal sealed class MainForm : Form
         });
         header.Controls.Add(new Label
         {
-            Text = "Yerel ağdaki cihazlara hızlı dosya gönder",
+            Text = "Karşı bilgisayarda LANSEND açık olmadan IP üzerinden gönder",
             ForeColor = Color.FromArgb(220, 235, 248),
             AutoSize = true,
             Location = new Point(27, 52)
         });
-        Controls.Add(header);
 
         var bottom = new Panel
         {
             Dock = DockStyle.Bottom,
-            Height = 78,
+            Height = 86,
             Padding = new Padding(20, 12, 20, 14),
             BackColor = Color.White
         };
+        ConfigureBottomButton(_addButton, "IP ile ekle", 96);
+        _addButton.Click += (_, _) => AddDevice();
+        bottom.Controls.Add(_addButton);
+
+        ConfigureBottomButton(_scanButton, "Ağı tara", 96);
+        _scanButton.Click += async (_, _) => await ScanAsync();
+        bottom.Controls.Add(_scanButton);
+
+        ConfigureBottomButton(_openTargetButton, "Hedef paylaşımı aç", 160);
+        _openTargetButton.Click += (_, _) => OpenTargetShare();
+        bottom.Controls.Add(_openTargetButton);
 
         _sendButton.Text = "Seçili cihaza gönder";
-        _sendButton.Width = 170;
+        _sendButton.Width = 175;
         _sendButton.Height = 36;
         _sendButton.Anchor = AnchorStyles.Right | AnchorStyles.Top;
-        _sendButton.Location = new Point(bottom.Width - 190, 12);
         _sendButton.Click += async (_, _) => await SendSelectedAsync();
         bottom.Controls.Add(_sendButton);
 
-        _openFolderButton.Text = "LANSEND klasörünü aç";
-        _openFolderButton.Width = 170;
-        _openFolderButton.Height = 36;
-        _openFolderButton.Anchor = AnchorStyles.Left | AnchorStyles.Top;
-        _openFolderButton.Location = new Point(20, 12);
-        _openFolderButton.Click += (_, _) => OpenReceiveFolder();
-        bottom.Controls.Add(_openFolderButton);
-
-        _statusLabel.AutoSize = true;
+        _statusLabel.AutoEllipsis = true;
         _statusLabel.ForeColor = Color.FromArgb(80, 90, 102);
-        _statusLabel.Location = new Point(215, 22);
+        _statusLabel.Location = new Point(395, 22);
+        _statusLabel.Height = 36;
         _statusLabel.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top;
         bottom.Controls.Add(_statusLabel);
-        bottom.Resize += (_, _) => _sendButton.Left = bottom.ClientSize.Width - _sendButton.Width - 20;
-        Controls.Add(bottom);
+        bottom.Resize += (_, _) =>
+        {
+            _sendButton.Left = bottom.ClientSize.Width - _sendButton.Width - 20;
+            _statusLabel.Width = Math.Max(100, _sendButton.Left - _statusLabel.Left - 16);
+        };
 
         var content = new TableLayoutPanel
         {
@@ -124,56 +130,72 @@ internal sealed class MainForm : Form
             BackColor = Color.FromArgb(245, 247, 250)
         };
         content.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));
-        content.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));
+        content.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         content.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        Controls.Add(content);
-
-        var title = new Label
+        content.Controls.Add(new Label
         {
-            Text = "Bağlı cihazlar",
+            Text = "SMB açık cihazlar",
             Font = new Font("Segoe UI Semibold", 13F, FontStyle.Bold),
             ForeColor = Color.FromArgb(35, 43, 52),
             Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft
-        };
-        content.Controls.Add(title, 0, 0);
+        }, 0, 0);
 
-        var fileBar = new Panel { Dock = DockStyle.Fill };
         _selectedFilesLabel.AutoSize = false;
         _selectedFilesLabel.Dock = DockStyle.Fill;
         _selectedFilesLabel.ForeColor = Color.FromArgb(80, 90, 102);
-        fileBar.Controls.Add(_selectedFilesLabel);
-        _refreshButton.Text = "Yenile";
-        _refreshButton.Width = 78;
-        _refreshButton.Height = 27;
-        _refreshButton.Dock = DockStyle.Right;
-        _refreshButton.Click += (_, _) => RefreshPeers();
-        fileBar.Controls.Add(_refreshButton);
-        content.Controls.Add(fileBar, 0, 1);
+        content.Controls.Add(_selectedFilesLabel, 0, 1);
 
-        _peerList.Dock = DockStyle.Fill;
-        _peerList.View = View.Details;
-        _peerList.FullRowSelect = true;
-        _peerList.GridLines = true;
-        _peerList.MultiSelect = false;
-        _peerList.HideSelection = false;
-        _peerList.BackColor = Color.White;
-        _peerList.Columns.Add("Cihaz adı", 260);
-        _peerList.Columns.Add("Kullanıcı", 210);
-        _peerList.Columns.Add("IP adresi", 170);
-        _peerList.Columns.Add("Durum", 120);
-        _peerList.DoubleClick += async (_, _) => await SendSelectedAsync();
-        content.Controls.Add(_peerList, 0, 2);
+        _deviceList.Dock = DockStyle.Fill;
+        _deviceList.View = View.Details;
+        _deviceList.FullRowSelect = true;
+        _deviceList.GridLines = true;
+        _deviceList.MultiSelect = false;
+        _deviceList.HideSelection = false;
+        _deviceList.BackColor = Color.White;
+        _deviceList.Columns.Add("Cihaz adı", 245);
+        _deviceList.Columns.Add("Kullanıcı", 205);
+        _deviceList.Columns.Add("IP adresi", 165);
+        _deviceList.Columns.Add("Paylaşım", 145);
+        _deviceList.Columns.Add("Durum", 135);
+        _deviceList.DoubleClick += async (_, _) => await SendSelectedAsync();
+        _deviceList.MouseDown += DeviceListOnMouseDown;
+        _deviceList.ContextMenuStrip = BuildDeviceContextMenu();
+        content.Controls.Add(_deviceList, 0, 2);
+
+        Controls.Add(content);
+        Controls.Add(bottom);
+        Controls.Add(header);
 
         UpdateSelectedFilesLabel();
-        UpdateStatus("Cihazlar aranıyor...");
+        UpdateStatus("Ağı taramak için Ağı tara düğmesine basın.");
+    }
+
+    private static void ConfigureBottomButton(Button button, string text, int width)
+    {
+        button.Text = text;
+        button.Width = width;
+        button.Height = 36;
+        button.Anchor = AnchorStyles.Left | AnchorStyles.Top;
+    }
+
+    private ContextMenuStrip BuildDeviceContextMenu()
+    {
+        var menu = new ContextMenuStrip();
+        menu.Items.Add("Gönder", null, async (_, _) => await SendSelectedAsync());
+        menu.Items.Add("Düzenle", null, (_, _) => EditSelectedDevice());
+        menu.Items.Add("Hedef paylaşımını aç", null, (_, _) => OpenTargetShare());
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Listeden sil", null, (_, _) => RemoveSelectedDevice());
+        return menu;
     }
 
     private NotifyIcon BuildTrayIcon()
     {
         var menu = new ContextMenuStrip();
         menu.Items.Add("LANSEND'i aç", null, (_, _) => ShowWindow());
-        menu.Items.Add("LANSEND klasörünü aç", null, (_, _) => OpenReceiveFolder());
+        menu.Items.Add("Ağı tara", null, async (_, _) => await ScanAsync());
+        menu.Items.Add("Hedef paylaşımını aç", null, (_, _) => OpenTargetShare());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Çıkış", null, (_, _) => ExitApplication());
 
@@ -190,43 +212,77 @@ internal sealed class MainForm : Form
 
     private void MainFormOnShown(object? sender, EventArgs e)
     {
-        RefreshPeers();
+        RefreshDeviceList();
         if (_startHidden && _pendingPaths.Count == 0)
         {
             Hide();
             ShowInTaskbar = false;
         }
-        else
+
+        _ = ScanAsync();
+    }
+
+    private async Task ScanAsync()
+    {
+        if (_scanCancellation is not null)
         {
-            ShowWindow();
+            return;
+        }
+
+        _scanCancellation = new CancellationTokenSource();
+        _scanButton.Enabled = false;
+        UpdateStatus("Yerel ağdaki IP adresleri ve SMB paylaşımı taranıyor...");
+        try
+        {
+            var devices = await _discovery.ScanAsync(_devices, _scanCancellation.Token);
+            _devices = devices.ToList();
+            _profileStore.Save(_devices);
+            RefreshDeviceList();
+            if (_devices.Count == 0)
+            {
+                UpdateStatus("SMB cihazı bulunamadı. Hedefte paylaşımı açın veya IP ile ekleyin.");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            UpdateStatus("Ağ taraması iptal edildi.");
+        }
+        catch (Exception exception)
+        {
+            UpdateStatus("Ağ taraması başarısız.");
+            MessageBox.Show(this, exception.Message, "LANSEND - Tarama başarısız", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            _scanButton.Enabled = true;
+            _scanCancellation?.Dispose();
+            _scanCancellation = null;
         }
     }
 
-    private void DiscoveryOnPeersChanged(object? sender, EventArgs e)
-    {
-        RunOnUi(RefreshPeers);
-    }
-
-    private void RefreshPeers()
+    private void RefreshDeviceList()
     {
         if (IsDisposed)
         {
             return;
         }
 
-        var selectedId = (_peerList.SelectedItems.Count > 0 ? _peerList.SelectedItems[0].Tag as PeerInfo : null)?.Id;
-        _peerList.BeginUpdate();
+        var selectedId = _deviceList.SelectedItems.Count > 0
+            ? (_deviceList.SelectedItems[0].Tag as DeviceProfile)?.Id
+            : null;
+        _deviceList.BeginUpdate();
         try
         {
-            _peerList.Items.Clear();
-            foreach (var peer in _discovery.GetPeers())
+            _deviceList.Items.Clear();
+            foreach (var device in _devices)
             {
-                var item = new ListViewItem(peer.DeviceName) { Tag = peer };
-                item.SubItems.Add(peer.UserName);
-                item.SubItems.Add(peer.IpAddress);
-                item.SubItems.Add("Hazır");
-                _peerList.Items.Add(item);
-                if (peer.Id == selectedId)
+                var item = new ListViewItem(device.DeviceName) { Tag = device };
+                item.SubItems.Add(string.IsNullOrWhiteSpace(device.UserName) ? "—" : device.UserName);
+                item.SubItems.Add(device.IpAddress);
+                item.SubItems.Add(device.ShareName);
+                item.SubItems.Add(device.Status);
+                _deviceList.Items.Add(item);
+                if (device.Id == selectedId)
                 {
                     item.Selected = true;
                 }
@@ -234,21 +290,104 @@ internal sealed class MainForm : Form
         }
         finally
         {
-            _peerList.EndUpdate();
+            _deviceList.EndUpdate();
         }
 
-        if (_peerList.Items.Count == 0)
+        if (_devices.Count == 0)
         {
-            UpdateStatus("Başka LANSEND cihazı bulunamadı. Diğer cihazlarda da LANSEND açık olmalı.");
+            UpdateStatus("SMB cihazı bulunamadı. Hedefte paylaşımı açın veya IP ile ekleyin.");
         }
         else if (_pendingPaths.Count > 0)
         {
-            UpdateStatus($"{_peerList.Items.Count} cihaz hazır. Göndermek için bir cihaz seçin.");
+            UpdateStatus($"{_devices.Count} kayıt bulundu. Göndermek için çevrimiçi bir cihaz seçin.");
         }
         else
         {
-            UpdateStatus($"{_peerList.Items.Count} cihaz bulundu.");
+            UpdateStatus($"{_devices.Count} cihaz listelendi.");
         }
+    }
+
+    private void DeviceListOnMouseDown(object? sender, MouseEventArgs e)
+    {
+        if (e.Button == MouseButtons.Right && _deviceList.GetItemAt(e.X, e.Y) is ListViewItem item)
+        {
+            item.Selected = true;
+        }
+    }
+
+    private void AddDevice()
+    {
+        using var dialog = new DeviceEditorDialog(null);
+        if (dialog.ShowDialog(this) != DialogResult.OK || dialog.Profile is null)
+        {
+            return;
+        }
+
+        UpsertDevice(dialog.Profile);
+    }
+
+    private void EditSelectedDevice()
+    {
+        if (GetSelectedDevice() is not { } selected)
+        {
+            MessageBox.Show(this, "Önce listeden bir cihaz seçin.", "LANSEND", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dialog = new DeviceEditorDialog(selected);
+        if (dialog.ShowDialog(this) == DialogResult.OK && dialog.Profile is not null)
+        {
+            UpsertDevice(dialog.Profile);
+        }
+    }
+
+    private void UpsertDevice(DeviceProfile profile)
+    {
+        var index = _devices.FindIndex(device =>
+            device.Id.Equals(profile.Id, StringComparison.OrdinalIgnoreCase) ||
+            device.IpAddress.Equals(profile.IpAddress, StringComparison.OrdinalIgnoreCase));
+        if (index >= 0)
+        {
+            profile.IsOnline = _devices[index].IsOnline;
+            _devices[index] = profile;
+        }
+        else
+        {
+            _devices.Add(profile);
+        }
+
+        _profileStore.Save(_devices);
+        RefreshDeviceList();
+    }
+
+    private void RemoveSelectedDevice()
+    {
+        if (GetSelectedDevice() is not { } selected)
+        {
+            return;
+        }
+
+        var result = MessageBox.Show(
+            this,
+            $"{selected.DeviceName} cihazı listeden silinsin mi?",
+            "LANSEND",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question);
+        if (result != DialogResult.Yes)
+        {
+            return;
+        }
+
+        _devices.RemoveAll(device => device.Id.Equals(selected.Id, StringComparison.OrdinalIgnoreCase));
+        _profileStore.Save(_devices);
+        RefreshDeviceList();
+    }
+
+    private DeviceProfile? GetSelectedDevice()
+    {
+        return _deviceList.SelectedItems.Count == 0
+            ? null
+            : _deviceList.SelectedItems[0].Tag as DeviceProfile;
     }
 
     public void HandleExternalRequest(ControlRequest request)
@@ -256,17 +395,19 @@ internal sealed class MainForm : Form
         if (request.Command.Equals("send", StringComparison.OrdinalIgnoreCase))
         {
             _pendingPaths.Clear();
-            _pendingPaths.AddRange(request.Paths.Where(path => !path.StartsWith("--", StringComparison.OrdinalIgnoreCase)));
+            _pendingPaths.AddRange(request.Paths
+                .Where(path => !path.StartsWith("--", StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase));
             UpdateSelectedFilesLabel();
         }
 
         ShowWindow();
-        RefreshPeers();
+        _ = ScanAsync();
     }
 
     private async Task SendSelectedAsync()
     {
-        if (_peerList.SelectedItems.Count == 0 || _peerList.SelectedItems[0].Tag is not PeerInfo peer)
+        if (GetSelectedDevice() is not { } device)
         {
             MessageBox.Show(this, "Önce listeden bir cihaz seçin.", "LANSEND", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
@@ -306,9 +447,28 @@ internal sealed class MainForm : Form
         {
             var progress = new Progress<TransferProgress>(value =>
                 UpdateStatus($"{value.CurrentFile} gönderiliyor — {value.Percentage:0}% ({FormatBytes(value.BytesSent)} / {FormatBytes(value.TotalBytes)})"));
-            await _client.SendAsync(peer, build.Files, progress, _sendCancellation.Token);
-            UpdateStatus($"Aktarım tamamlandı: {peer.DeviceName}");
-            MessageBox.Show(this, $"{build.Files.Count} dosya {peer.DeviceName} cihazına gönderildi.", "LANSEND", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+            try
+            {
+                await _transfer.SendAsync(device, build.Files, null, progress, _sendCancellation.Token);
+            }
+            catch (SmbAuthenticationRequiredException)
+            {
+                using var credentialsDialog = new CredentialDialog(device.UserName);
+                if (credentialsDialog.ShowDialog(this) != DialogResult.OK || credentialsDialog.Credentials is null)
+                {
+                    UpdateStatus("SMB kimlik bilgileri girilmedi.");
+                    return;
+                }
+
+                var credentials = credentialsDialog.Credentials;
+                device.UserName = credentials.UserName;
+                _profileStore.Save(_devices);
+                await _transfer.SendAsync(device, build.Files, credentials, progress, _sendCancellation.Token);
+            }
+
+            UpdateStatus($"Aktarım tamamlandı: {device.DeviceName}");
+            MessageBox.Show(this, $"{build.Files.Count} öğe {device.DeviceName} cihazındaki Documents\\LANSEND klasörüne gönderildi.", "LANSEND", MessageBoxButtons.OK, MessageBoxIcon.Information);
             _pendingPaths.Clear();
             UpdateSelectedFilesLabel();
         }
@@ -329,41 +489,26 @@ internal sealed class MainForm : Form
         }
     }
 
-    private Task<bool> ConfirmIncomingTransferAsync(IncomingTransferRequest request)
+    private void OpenTargetShare()
     {
-        if (IsDisposed || !IsHandleCreated)
+        if (GetSelectedDevice() is not { } device)
         {
-            return Task.FromResult(false);
+            MessageBox.Show(this, "Önce listeden bir cihaz seçin.", "LANSEND", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
         }
 
-        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        RunOnUi(() =>
+        try
         {
-            var preview = string.Join(Environment.NewLine, request.Files.Take(5).Select(file =>
-                $"• {Path.GetFileName(file.RelativePath)} ({FormatBytes(file.Length)})"));
-            if (request.Files.Count > 5)
+            Process.Start(new ProcessStartInfo
             {
-                preview += Environment.NewLine + $"• ... ve {request.Files.Count - 5} dosya daha";
-            }
-
-            var result = MessageBox.Show(
-                this,
-                $"{request.DeviceName} / {request.UserName} ({request.RemoteIpAddress}) cihazı {request.Files.Count} dosya göndermek istiyor.\n\n{preview}\n\nDosyalar Documents\\LANSEND klasörüne kaydedilsin mi?",
-                "LANSEND - Gelen aktarım",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
-            completion.TrySetResult(result == DialogResult.Yes);
-        });
-        return completion.Task;
-    }
-
-    private void ServerOnTransferCompleted(object? sender, TransferCompletedEventArgs e)
-    {
-        RunOnUi(() =>
+                FileName = device.UncPath,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception exception)
         {
-            UpdateStatus($"Gelen aktarım tamamlandı — {e.ReceivedPaths.Count} dosya kaydedildi.");
-            _trayIcon.ShowBalloonTip(3500, "LANSEND", $"{e.ReceivedPaths.Count} dosya Documents\\LANSEND klasörüne kaydedildi.", ToolTipIcon.Info);
-        });
+            MessageBox.Show(this, exception.Message, "LANSEND - Paylaşım açılamadı", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private void ControlPipeOnRequestReceived(object? sender, ControlRequest request)
@@ -384,17 +529,6 @@ internal sealed class MainForm : Form
         _selectedFilesLabel.Text = $"Gönderilecek: {count} öğe — {names}{(count > 3 ? " ..." : string.Empty)}";
     }
 
-    private void OpenReceiveFolder()
-    {
-        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "LANSEND");
-        Directory.CreateDirectory(path);
-        Process.Start(new ProcessStartInfo
-        {
-            FileName = path,
-            UseShellExecute = true
-        });
-    }
-
     private void ShowWindow()
     {
         if (IsDisposed)
@@ -411,12 +545,10 @@ internal sealed class MainForm : Form
 
     private void UpdateStatus(string text)
     {
-        if (IsDisposed)
+        if (!IsDisposed)
         {
-            return;
+            _statusLabel.Text = text;
         }
-
-        _statusLabel.Text = text;
     }
 
     private void RunOnUi(Action action)
@@ -440,6 +572,9 @@ internal sealed class MainForm : Form
         catch (InvalidOperationException)
         {
         }
+        catch (ObjectDisposedException)
+        {
+        }
     }
 
     private static string FormatBytes(long bytes)
@@ -459,6 +594,7 @@ internal sealed class MainForm : Form
     private void ExitApplication()
     {
         _exitRequested = true;
+        _scanCancellation?.Cancel();
         _sendCancellation?.Cancel();
         _trayIcon.Visible = false;
         Application.Exit();
@@ -482,6 +618,8 @@ internal sealed class MainForm : Form
     {
         if (disposing)
         {
+            _scanCancellation?.Cancel();
+            _scanCancellation?.Dispose();
             _sendCancellation?.Cancel();
             _sendCancellation?.Dispose();
             _trayIcon.Dispose();

@@ -22,6 +22,8 @@ internal static class Program
             return;
         }
 
+        ShellIntegrationService.EnsureSendToShortcut(out _);
+
         var startHidden = args.Any(argument => argument.Equals("--background", StringComparison.OrdinalIgnoreCase));
         var discovery = new LanDeviceDiscoveryService();
         var transfer = new DirectSmbTransferService();

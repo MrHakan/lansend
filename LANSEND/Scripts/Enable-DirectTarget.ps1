@@ -20,7 +20,20 @@ else {
     Grant-SmbShareAccess -Name $shareName -AccountName $accountName -AccessRight Change -Force | Out-Null
 }
 
-Enable-NetFirewallRule -DisplayGroup "File and Printer Sharing" -ErrorAction SilentlyContinue | Out-Null
+$firewallRuleName = "LANSEND Direct SMB"
+if ($null -eq (Get-NetFirewallRule -DisplayName $firewallRuleName -ErrorAction SilentlyContinue)) {
+    New-NetFirewallRule `
+        -DisplayName $firewallRuleName `
+        -Description "Allow direct LANSEND file copies over Windows SMB" `
+        -Direction Inbound `
+        -Protocol TCP `
+        -LocalPort 445 `
+        -Profile Private `
+        -Action Allow | Out-Null
+}
+else {
+    Set-NetFirewallRule -DisplayName $firewallRuleName -Enabled True -Profile Private -Action Allow | Out-Null
+}
 
 Write-Host "Hazır: \\$env:COMPUTERNAME\$shareName"
 Write-Host "Hedef klasör: $folder"
